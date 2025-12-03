@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cosmic Background</title>
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:black; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+class Color {
+    constructor(r=1,g=1,b=1,a=1){ Object.assign(this,{r,g,b,a}); }
+    toRGBA(){ return `rgba(${Math.floor(this.r*255)},${Math.floor(this.g*255)},${Math.floor(this.b*255)},${this.a})`; }
+}
+
+class Star {
+    constructor(x,y,rot,scale,layerIndex,img,color,colorPulses=false){
+        Object.assign(this,{x,y,rot,scale,layerIndex,img,color,colorPulses});
+        this.baseScale = scale;
+        this.rotSpeed = (Math.random()-0.5)*0.002;
+        this.layerIndexSquared = layerIndex*layerIndex;
+    }
+    update(dt){
+        if(this.rotSpeed!==0) this.rot += this.rotSpeed * dt;
+    }
+	getScale(time){
+		return this.baseScale;
+	}
+}
+
+class CosmicBackground {
+    constructor({canvas,images,numberOfStar,starColorMin,worldX,worldY,worldWidth,worldHeight,backgroundColor}){
+        Object.assign(this,{canvas,ctx:canvas.getContext('2d'),images,numberOfStar,starColorMin,worldX,worldY,worldWidth,worldHeight,backgroundColor});
+        this.stars = [];
+        this.starCanvasCache = {};
+        this.generateStars();
+        this.initialCamX = canvas.width/2;
+        this.initialCamY = canvas.height/2;
+    }
+
+    getRandomColor(){
+        const [rMin,gMin,bMin] = this.starColorMin;
+        return new Color(
+            Math.random()*(1-rMin/10)+rMin/10,
+            Math.random()*(1-gMin/10)+gMin/10,
+            Math.random()*(1-bMin/10)+bMin/10,
+            1
+        );
+    }
+
+    createStarCanvas(type,color){
+        const key = `${type}-${color.r}-${color.g}-${color.b}`;
+        if(this.starCanvasCache[key]) return this.starCanvasCache[key];
+
+        const img = this.images[type];
+        const off = document.createElement('canvas');
+        off.width = img.width; off.height = img.height;
+        const ctx = off.getContext('2d');
+        ctx.drawImage(img,0,0);
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.fillStyle = color.toRGBA();
+        ctx.fillRect(0,0,off.width,off.height);
+        this.starCanvasCache[key] = off;
+        return off;
+    }
+
+    generateStars(){
+        const createStar = (type,layerIndex=null,scale=null,colorPulses=false)=>{
+            const l = layerIndex!==null?layerIndex:0.5+Math.random()*0.4;
+            const s = scale!==null?scale:Math.random()*(1-0.5)+0.5;
+            const color = this.getRandomColor();
+            const star = new Star(
+                this.worldX+Math.random()*this.worldWidth,
+                this.worldY+Math.random()*this.worldHeight,
+                (Math.random()*6.28-3.14),
+                s,
+                l,
+                this.images[type],
+                color,
+                colorPulses
+            );
+            star.canvas = this.createStarCanvas(type,color);
+            this.stars.push(star);
+        };
+
+        for(let i=0;i<this.numberOfStar*3;i++) createStar('shine_128',0.4, Math.random()*2.5+1);
+        for(let i=0;i<this.numberOfStar*20;i++) createStar('glow_8');
+        for(let i=0;i<this.numberOfStar*40;i++) createStar('shine_8');
+        for(let i=0;i<this.numberOfStar;i++) createStar('glow_128', null, (Math.random()*0.5+0.2)**2+0.2);
+        for(let i=0;i<this.numberOfStar*5;i++) createStar('sparkle_16', null, 1);
+
+        this.stars.sort((a,b)=>a.layerIndex-b.layerIndex);
+    }
+
+    update(dt){
+        const STAR_SPEED = 1.2;
+        for(const s of this.stars){
+            s.x -= s.layerIndex*STAR_SPEED*dt;
+            s.y -= s.layerIndex*STAR_SPEED*dt;
+            s.update(dt);
+
+            const centerX = this.worldX + this.worldWidth/2;
+            const centerY = this.worldY + this.worldHeight/2;
+            if(Math.abs(centerX - s.x) > this.worldWidth/2 + 10) s.x = this.worldX + this.worldWidth + 5;
+            if(Math.abs(centerY - s.y) > this.worldHeight/2 + 10) s.y = this.worldY + this.worldHeight + 5;
+        }
+    }
+
+    draw(opacity=1){
+        const ctx = this.ctx;
+        ctx.fillStyle = `rgba(0,0,0,${opacity})`;
+        ctx.fillRect(this.worldX,this.worldY,this.worldWidth,this.worldHeight);
+
+        const cx = this.canvas.width/2 - this.initialCamX;
+        const cy = this.canvas.height/2 - this.initialCamY;
+
+        for(const s of this.stars){
+            ctx.save();
+            ctx.translate(s.x + (cx/3)*s.layerIndexSquared, s.y + (cy/3)*s.layerIndexSquared);
+            ctx.rotate(s.rot);
+            ctx.globalAlpha = s.color.a;
+            const scale = s.getScale(performance.now());
+            ctx.drawImage(s.canvas,-s.canvas.width/2*scale,-s.canvas.height/2*scale,
+                          s.canvas.width*scale,s.canvas.height*scale);
+            ctx.restore();
+        }
+    }
+}
+
+
+const canvas = document.getElementById('gameCanvas');
+let cosmic = null;
+
+function resizeCanvas(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener('resize',resizeCanvas);
+resizeCanvas();
+
+const starTypes = ['shine_128','glow_8','shine_8','glow_128','sparkle_16'];
+let images = {}, loaded=0;
+
+for(const t of starTypes){
+    const img = new Image();
+    img.src = `assets/cosmic/${t}.png`;
+    img.onload = ()=>{
+        images[t]=img;
+        loaded++;
+        if(loaded===starTypes.length) start();
+    }
+}
+
+let paused = false;
+document.addEventListener('visibilitychange',()=>{ paused = document.hidden; });
+
+function start(){
+    const W = 3000, H = 1500, DELTA = 40*26/2;
+    cosmic = new CosmicBackground({
+        canvas,
+        images,
+        numberOfStar:60,
+        starColorMin:[2,4,6],
+        worldX:-W/2+DELTA,
+        worldY:-H/2+DELTA,
+        worldWidth:W,
+        worldHeight:H,
+        backgroundColor: new Color(0,0,0,1)
+    });
+
+    let lastTime = performance.now();
+    function animate(time){
+        const dt = (time - lastTime)/1000;
+        lastTime = time;
+
+        if(!paused){
+            cosmic.update(dt);
+            cosmic.draw(1);
+        }
+
+        requestAnimationFrame(animate);
+    }
+    animate(performance.now());
+}
+</script>
+</body>
+</html>
